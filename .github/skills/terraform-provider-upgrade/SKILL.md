@@ -151,13 +151,48 @@ mcp_terraform_get_provider_details(
 
 ### 4. Scan Codebase for Removed Resources
 
-**Critical Step:** Search for usage of removed resources
+**Critical Step:** Build the list of removed resources from the upgrade guide fetched in Step 3, then scan the entire codebase for every one of them.
+
+**Step 1: Extract removed resource names from the upgrade guide**
+
+Parse the upgrade guide content for resources explicitly marked as *removed*, *deleted*, or *superseded*. Build a complete list — do **not** assume only a few resources changed. Major version upgrades often remove dozens of resources across multiple service categories.
+
+**Step 2: Search for every removed resource**
 
 ```bash
-# Example: Search for removed SQL resources in Azure v4.0
-grep -r "azurerm_sql_server" --include="*.tf"
-grep -r "azurerm_sql_firewall_rule" --include="*.tf"
-grep -r "azurerm_sql_virtual_network_rule" --include="*.tf"
+# Generate a single regex alternation from ALL removed resources found in the upgrade guide
+# Replace the values inside the parentheses with the actual list from the guide
+REMOVED_RESOURCES=(
+  "old_resource_type_1"
+  "old_resource_type_2"
+  "old_resource_type_3"
+  # ... add every resource listed as removed in the upgrade guide
+)
+
+# Build a regex pattern and search all .tf files at once
+PATTERN=$(IFS="|"; echo "${REMOVED_RESOURCES[*]}")
+grep -rE "($PATTERN)" --include="*.tf" -l   # list affected files
+grep -rE "($PATTERN)" --include="*.tf"       # show full context
+```
+
+```bash
+# Alternatively, search for any resource block whose type begins with the
+# provider prefix (e.g. azurerm_) and cross-reference against the removed list
+grep -rE '^\s*resource\s+"<provider_prefix>[^"]+"' --include="*.tf"
+```
+
+> **Tip:** If the upgrade guide groups removals by service area (e.g. SQL, Compute, Networking), scan each group separately so findings are easier to triage.
+
+**Step 3: Repeat for deprecated data sources and provider arguments**
+
+The upgrade guide may also list deprecated **data sources** and **provider block arguments** separately. Run equivalent scans for those:
+
+```bash
+# Check for removed data source types
+grep -rE 'data\s+"(old_data_source_1|old_data_source_2)"' --include="*.tf"
+
+# Check for deprecated provider block arguments
+grep -rE '(deprecated_argument_1|deprecated_argument_2)\s*=' --include="*.tf" -l
 ```
 
 **Document findings:**
@@ -442,16 +477,29 @@ get_latest_provider_version(namespace="hashicorp", name="azurerm")
 # 2. Get upgrade guide
 resolveProviderDocID(...serviceSlug="4.0-upgrade-guide"...)
 getProviderDocs(providerDocID="<id>")
-# Review: azurerm_sql_* resources removed
+# Review: extract FULL list of removed / deprecated resources from the guide
+# (e.g. azurerm_sql_*, azurerm_automation_*, azurerm_network_*, etc.)
 
-# 3. Scan codebase
-grep -r "azurerm_sql_server" --include="*.tf"
+# 3. Scan codebase for ALL removed resources at once
+REMOVED=(
+  "azurerm_sql_server"
+  "azurerm_sql_database"
+  "azurerm_sql_firewall_rule"
+  "azurerm_sql_virtual_network_rule"
+  "azurerm_sql_elasticpool"
+  "azurerm_sql_active_directory_administrator"
+  "azurerm_sql_failover_group"
+  # ... every resource listed as removed in the 4.0 upgrade guide
+)
+PATTERN=$(IFS="|"; echo "${REMOVED[*]}")
+grep -rE "($PATTERN)" --include="*.tf"
 
-# 4. Migrate resources (fetch old + new docs)
-# 5. Add moved blocks
-# 6. Update arguments
-# 7. Create TERRAFORM_UPGRADE_BREAKING_CHANGES.md at repository root
-# 8. Commit with detailed message referencing documentation
+# 4. For each affected resource: fetch old + new docs, compare schemas
+# 5. Apply resource type renames and argument changes
+# 6. Add moved blocks for state migration
+# 7. Scan for deprecated provider block arguments and fix those too
+# 8. Create TERRAFORM_UPGRADE_BREAKING_CHANGES.md at repository root
+# 9. Commit with detailed message referencing documentation
 ```
 
 ## Best Practices
